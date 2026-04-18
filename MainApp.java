@@ -104,14 +104,20 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 		imageLabel.setOpaque(true);
 		imageLabel.setBorder(BorderFactory.createLineBorder(Color.GRAY, 2));
 		imageLabel.setFocusable(true);
-		imageLabel.addKeyListener(new KeyAdapter() {
-			@Override public void keyPressed(KeyEvent e) {
-				if (e.isControlDown() && e.getKeyCode() == KeyEvent.VK_V)
-					pasteImageFromClipboard();
-			}
-		});
 		imageLabel.addMouseListener(new MouseAdapter() {
 			@Override public void mouseClicked(MouseEvent e) { imageLabel.requestFocusInWindow(); }
+		});
+
+		// CTRL+V global — KeyEventDispatcher greift vor allen Komponenten (auch JSpinner/JTextField)
+		KeyboardFocusManager.getCurrentKeyboardFocusManager().addKeyEventDispatcher(e -> {
+			if (e.getID() == KeyEvent.KEY_PRESSED
+					&& e.isControlDown()
+					&& e.getKeyCode() == KeyEvent.VK_V
+					&& isFocused()) {
+				pasteImageFromClipboard();
+				return true;
+			}
+			return false;
 		});
 
 		imageScrollPane = new JScrollPane(imageLabel);
@@ -1016,6 +1022,8 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 		}
 	}
 
+	public Color getCurrentTransparencyColor() { return currentTransparencyColor; }
+
 	public void setEditedImage(BufferedImage editedImage) {
 		if (editedImage != null) {
 			// Neue Arbeitskopie erstellen
@@ -1346,7 +1354,7 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 		boolean[][] visited = new boolean[loadedImage.getWidth()][loadedImage.getHeight()];
 
 		queue.offer(new Point(startX, startY));
-		ImageUtils.pixelCount = 0;
+		int pixelCount = 0;
 
 		while (!queue.isEmpty()) {
 			Point p = queue.poll();
@@ -1364,7 +1372,7 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 
 			visited[x][y] = true;
 			loadedImage.setRGB(x, y, transparencyColor.getRGB());
-			ImageUtils.pixelCount++;
+			pixelCount++;
 
 			queue.offer(new Point(x + 1, y));
 			queue.offer(new Point(x - 1, y));
@@ -1372,7 +1380,7 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 			queue.offer(new Point(x, y - 1));
 		}
 
-		return ImageUtils.pixelCount > 0;
+		return pixelCount > 0;
 	}
 
 	private Point getImageCoordinates(MouseEvent e) {

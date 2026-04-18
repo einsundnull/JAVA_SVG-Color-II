@@ -20,20 +20,12 @@ import javax.imageio.ImageIO;
 
 public class ImageUtils {
 
-	public static Object fillType;
-	public static Color targetColor;
-	public static int pixelCount;
-
-	/**
-	 * Posterisiert ein Bild anhand der gegebenen Farbpalette und Toleranz. Jeder
-	 * Pixel wird durch die ähnlichste Farbe aus der Palette ersetzt.
-	 */
-public static BufferedImage posterize(BufferedImage original, List<Color> palette, int tolerance) {
+	/** Posterisiert mit expliziter Fallback-Farbe für Pixel ohne Palette-Treffer. */
+	public static BufferedImage posterize(BufferedImage original, List<Color> palette, int tolerance, Color noMatchColor) {
 		int width = original.getWidth();
 		int height = original.getHeight();
 		BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
-		// Pre-extract palette components to avoid Color object allocation per pixel
 		int n = palette.size();
 		int[] pr = new int[n], pg = new int[n], pb = new int[n], prgb = new int[n];
 		for (int i = 0; i < n; i++) {
@@ -41,8 +33,8 @@ public static BufferedImage posterize(BufferedImage original, List<Color> palett
 			pr[i] = c.getRed(); pg[i] = c.getGreen(); pb[i] = c.getBlue();
 			prgb[i] = c.getRGB();
 		}
-		int transpRGB = ColorUtils.TRANSPARENCY_COLOR.getRGB();
-		double tol2 = (double) tolerance * tolerance * 3; // squared Euclidean threshold
+		int noMatchRGB = noMatchColor.getRGB();
+		double tol2 = (double) tolerance * tolerance * 3;
 
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
@@ -61,10 +53,15 @@ public static BufferedImage posterize(BufferedImage original, List<Color> palett
 						bestIdx = i;
 					}
 				}
-				result.setRGB(x, y, bestIdx >= 0 ? prgb[bestIdx] : transpRGB);
+				result.setRGB(x, y, bestIdx >= 0 ? prgb[bestIdx] : noMatchRGB);
 			}
 		}
 		return result;
+	}
+
+	/** Posterisiert; Pixel ohne Palette-Treffer werden mit der globalen Transparenzfarbe markiert. */
+	public static BufferedImage posterize(BufferedImage original, List<Color> palette, int tolerance) {
+		return posterize(original, palette, tolerance, ColorUtils.TRANSPARENCY_COLOR);
 	}
 	public static BufferedImage convertToGrayscale(BufferedImage image) {
 		int width = image.getWidth();
@@ -271,14 +268,14 @@ public static BufferedImage posterize(BufferedImage original, List<Color> palett
 		return colors;
 	}
 
-	public static int floodFill(BufferedImage image, int startX, int startY, Color fillColor,
+	public static FloodFillResult floodFill(BufferedImage image, int startX, int startY, Color fillColor,
 			boolean makeTransparent, int tolerance) {
 		if (startX < 0 || startY < 0 || startX >= image.getWidth() || startY >= image.getHeight())
-			return 0;
+			return new FloodFillResult(0, null, makeTransparent);
 
 		Color origin = new Color(image.getRGB(startX, startY));
 		if (ColorUtils.colorsMatch(origin, fillColor, tolerance))
-			return 0;
+			return new FloodFillResult(0, origin, makeTransparent);
 
 		Queue<Point> queue = new LinkedList<>();
 		boolean[][] visited = new boolean[image.getWidth()][image.getHeight()];
@@ -305,24 +302,21 @@ public static BufferedImage posterize(BufferedImage original, List<Color> palett
 			queue.offer(new Point(x, y - 1));
 		}
 
-		targetColor = origin;
-		pixelCount = count;
-		fillType = makeTransparent ? "TRANSPARENZ" : "FARBE";
-		return count;
+		return new FloodFillResult(count, origin, makeTransparent);
 	}
 
 	public static boolean performFloodFill(int startX, int startY, Color fillColor, boolean isTransparency,
 			BufferedImage image) {
-		return floodFill(image, startX, startY, fillColor, isTransparency, 5) > 0;
+		return floodFill(image, startX, startY, fillColor, isTransparency, 5).changed();
 	}
 
 	public static boolean performFloodFill(int startX, int startY, Color fillColor, int tolerance,
 			BufferedImage image) {
-		return floodFill(image, startX, startY, fillColor, false, tolerance) > 0;
+		return floodFill(image, startX, startY, fillColor, false, tolerance).changed();
 	}
 
 	public static boolean performQuickFloodFill(int startX, int startY, Color transparencyColor,
 			BufferedImage image) {
-		return floodFill(image, startX, startY, transparencyColor, true, 5) > 0;
+		return floodFill(image, startX, startY, transparencyColor, true, 5).changed();
 	}
 }

@@ -14,6 +14,7 @@ import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.function.Consumer;
 
 import javax.swing.BorderFactory;
 import javax.swing.ImageIcon;
@@ -26,35 +27,55 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 
 public class ImageEditorWindow extends JFrame {
-    public static final Color TRANSPARENCY_COLOR = ColorUtils.TRANSPARENCY_COLOR;
-    
+
+    private final Color transparencyColor;
     private BufferedImage originalImage;
     private BufferedImage editedImage;
     private JLabel imageLabel;
     private JScrollPane imageScrollPane;
     private double zoomFactor = 1.0;
-    
+
     private Color selectedColor = Color.RED;
     private List<Color> colorPalette;
     private JPanel palettePanel;
-    private MainApp parentApp;
+    private final Consumer<BufferedImage> onSave;
     private boolean hasChanges = false;
-    
-    public ImageEditorWindow(MainApp parent, BufferedImage image) {
-        this.parentApp = parent;
+
+    /**
+     * Vollständig entkoppelter Konstruktor — keine App-Klasse nötig.
+     *
+     * @param owner            übergeordnetes Fenster (darf null sein)
+     * @param image            zu bearbeitendes Bild
+     * @param onSave           wird mit dem bearbeiteten Bild aufgerufen beim Speichern
+     * @param transparencyColor Farbe die als "transparent" behandelt wird
+     */
+    public ImageEditorWindow(java.awt.Frame owner, BufferedImage image,
+                             Consumer<BufferedImage> onSave, Color transparencyColor) {
+        this.onSave = onSave;
+        this.transparencyColor = transparencyColor;
         this.originalImage = image;
         this.editedImage = deepCopy(image);
-        
+
         initializePalette();
-        setupWindow();
+        setupWindow(owner);
         setupImagePanel();
         setupControlPanel();
-        
+
         setVisible(true);
-        
+
         System.out.println("🎨 Image Editor geöffnet - Größe: " + image.getWidth() + "x" + image.getHeight());
         System.out.println("💡 Klicken Sie auf Bereiche zum Floodfill");
-        System.out.println("🔴 Transparenz-Farbe: " + String.format("#%06X", TRANSPARENCY_COLOR.getRGB() & 0xFFFFFF));
+        System.out.println("🔴 Transparenz-Farbe: " + String.format("#%06X", transparencyColor.getRGB() & 0xFFFFFF));
+    }
+
+    /** Ohne explizite Transparenzfarbe — nutzt Magenta als Standard. */
+    public ImageEditorWindow(java.awt.Frame owner, BufferedImage image, Consumer<BufferedImage> onSave) {
+        this(owner, image, onSave, ColorUtils.transparencyColor);
+    }
+
+    /** Kompatibilitäts-Konstruktor für MainApp. */
+    public ImageEditorWindow(MainApp parent, BufferedImage image) {
+        this(parent, image, parent::setEditedImage, parent.getCurrentTransparencyColor());
     }
     
     private void initializePalette() {
@@ -76,16 +97,16 @@ public class ImageEditorWindow extends JFrame {
         colorPalette.add(new Color(192, 192, 192));
         
         // Transparenz-Farbe (speziell markiert)
-        colorPalette.add(TRANSPARENCY_COLOR);
+        colorPalette.add(transparencyColor);
         
         selectedColor = Color.RED;
     }
     
-    private void setupWindow() {
+    private void setupWindow(java.awt.Frame owner) {
         setTitle("Image Editor - Floodfill & Color Tools");
         setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
         setSize(1000, 700);
-        setLocationRelativeTo(parentApp);
+        setLocationRelativeTo(owner);
         setLayout(new BorderLayout());
         
         // Window Closing Handler
@@ -232,7 +253,7 @@ public class ImageEditorWindow extends JFrame {
         btn.setBorderPainted(true);
         
         // Debug: Prüfe Farbe
-        if (color.equals(TRANSPARENCY_COLOR)) {
+        if (color.equals(transparencyColor)) {
             System.out.println("🔴 Erstelle Transparenz-Button - Farbe: " + 
                 String.format("#%02X%02X%02X", color.getRed(), color.getGreen(), color.getBlue()));
         }
@@ -241,7 +262,7 @@ public class ImageEditorWindow extends JFrame {
         btn.setBackground(color);
         
         // Spezielle Kennzeichnung für Transparenz-Farbe
-        if (color.equals(TRANSPARENCY_COLOR)) {
+        if (color.equals(transparencyColor)) {
             btn.setText("🔍");
             btn.setFont(new Font(Font.SANS_SERIF, Font.BOLD, 20));
             btn.setForeground(Color.WHITE);
@@ -268,7 +289,7 @@ public class ImageEditorWindow extends JFrame {
         btn.addActionListener(e -> {
             selectedColor = color;
             updatePaletteDisplay();
-            System.out.println("🎨 Farbe gewählt: " + (color.equals(TRANSPARENCY_COLOR) ? "TRANSPARENZ" : 
+            System.out.println("🎨 Farbe gewählt: " + (color.equals(transparencyColor) ? "TRANSPARENZ" : 
                 "RGB(" + color.getRed() + "," + color.getGreen() + "," + color.getBlue() + ")"));
         });
         
@@ -301,9 +322,9 @@ public class ImageEditorWindow extends JFrame {
     }
     
     private void performFloodFill(int startX, int startY, Color fillColor) {
-        boolean isTransparency = fillColor.equals(TRANSPARENCY_COLOR);
-        int filled = ImageUtils.floodFill(editedImage, startX, startY, fillColor, isTransparency, 5);
-        if (filled > 0) {
+        boolean isTransparency = fillColor.equals(transparencyColor);
+        FloodFillResult result = ImageUtils.floodFill(editedImage, startX, startY, fillColor, isTransparency, 5);
+        if (result.changed()) {
             hasChanges = true;
             updateImageDisplay();
         }
@@ -361,10 +382,9 @@ public class ImageEditorWindow extends JFrame {
     }
     
     private void saveAndClose() {
-        // Bearbeitetes Bild an MainApp zurückgeben
-        if (parentApp != null) {
-            parentApp.setEditedImage(editedImage);
-            System.out.println("💾 Bearbeitetes Bild an MainApp übertragen");
+        if (onSave != null) {
+            onSave.accept(editedImage);
+            System.out.println("💾 Bearbeitetes Bild übergeben");
         }
         dispose();
     }
