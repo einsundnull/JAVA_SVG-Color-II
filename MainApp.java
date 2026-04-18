@@ -113,7 +113,7 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 			if (e.getID() == KeyEvent.KEY_PRESSED
 					&& e.isControlDown()
 					&& e.getKeyCode() == KeyEvent.VK_V
-					&& isFocused()) {
+					&& KeyboardFocusManager.getCurrentKeyboardFocusManager().getFocusedWindow() == MainApp.this) {
 				pasteImageFromClipboard();
 				return true;
 			}
