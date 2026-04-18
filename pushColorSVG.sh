@@ -4,7 +4,7 @@
 
 # === 1. Konfiguration ===
 PROJEKT_PFAD="C:\Users\pc\eclipse-workspace\SVG_Color\src\main\java\main"
-GITHUB_URL="https://github.com/einsundnull/JAVA_AllColorSVG.git"
+GITHUB_URL="https://github.com/einsundnull/JAVA_SVG-Color-II.git"
 
 echo "🚀 Starte Git Deployment für PosterAppMultiColorSVG..."
 
