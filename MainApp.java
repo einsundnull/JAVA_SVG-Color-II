@@ -13,12 +13,17 @@ import java.awt.RenderingHints;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.Robot;
+import java.awt.Toolkit;
+import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.DataFlavor;
 import java.awt.datatransfer.Transferable;
 import java.awt.dnd.DnDConstants;
 import java.awt.dnd.DropTarget;
 import java.awt.dnd.DropTargetAdapter;
 import java.awt.dnd.DropTargetDropEvent;
+import java.awt.KeyboardFocusManager;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.image.BufferedImage;
@@ -79,7 +84,9 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 
 		setupImagePanel();
 		setupControlPanel();
-		updateCursorForMode(); // Initial cursor setzen
+		updateCursorForMode();
+
+		SwingUtilities.invokeLater(() -> imageLabel.requestFocusInWindow());
 
 		setVisible(true);
 
@@ -96,6 +103,16 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 		imageLabel.setBackground(Color.LIGHT_GRAY);
 		imageLabel.setOpaque(true);
 		imageLabel.setBorder(BorderFactory.createLineBorder(Color.GRAY, 2));
+		imageLabel.setFocusable(true);
+		imageLabel.addKeyListener(new KeyAdapter() {
+			@Override public void keyPressed(KeyEvent e) {
+				if (e.isControlDown() && e.getKeyCode() == KeyEvent.VK_V)
+					pasteImageFromClipboard();
+			}
+		});
+		imageLabel.addMouseListener(new MouseAdapter() {
+			@Override public void mouseClicked(MouseEvent e) { imageLabel.requestFocusInWindow(); }
+		});
 
 		imageScrollPane = new JScrollPane(imageLabel);
 		imageScrollPane.setPreferredSize(new Dimension(800, 600));
@@ -414,6 +431,91 @@ public class MainApp extends JFrame implements EditToolsWindow.EditToolsListener
 		int y = (labelHeight - imageHeight) / 2;
 
 		return new Rectangle(x, y, imageWidth, imageHeight);
+	}
+
+	private void pasteImageFromClipboard() {
+		try {
+			Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
+			Transferable content = clipboard.getContents(null);
+			if (content == null) {
+				System.out.println("⚠️ Clipboard leer");
+				return;
+			}
+
+			System.out.println("Clipboard Flavors:");
+			for (DataFlavor f : content.getTransferDataFlavors())
+				System.out.println("  " + f.getMimeType());
+
+			BufferedImage buffered = null;
+
+			// 1. Standard Java image flavor
+			if (content.isDataFlavorSupported(DataFlavor.imageFlavor)) {
+				java.awt.Image img = (java.awt.Image) content.getTransferData(DataFlavor.imageFlavor);
+				if (img != null) {
+					// MediaTracker ensures async image is fully loaded
+					java.awt.MediaTracker tracker = new java.awt.MediaTracker(this);
+					tracker.addImage(img, 0);
+					tracker.waitForAll();
+					int w = img.getWidth(null);
+					int h = img.getHeight(null);
+					if (w > 0 && h > 0) {
+						buffered = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+						Graphics2D g2d = buffered.createGraphics();
+						g2d.drawImage(img, 0, 0, null);
+						g2d.dispose();
+						System.out.println("✅ imageFlavor gelesen: " + w + "x" + h);
+					}
+				}
+			}
+
+			// 2. Windows DIB / PNG als InputStream (häufigster Windows-Fall)
+			if (buffered == null) {
+				for (DataFlavor f : content.getTransferDataFlavors()) {
+					String mime = f.getMimeType();
+					if ((mime.contains("image/png") || mime.contains("image/x-png")
+							|| mime.contains("image/bmp") || mime.contains("image/dib"))
+							&& f.getRepresentationClass() == java.io.InputStream.class) {
+						try (java.io.InputStream is = (java.io.InputStream) content.getTransferData(f)) {
+							buffered = ImageIO.read(is);
+							if (buffered != null) {
+								System.out.println("✅ InputStream-Flavor gelesen (" + mime + "): "
+										+ buffered.getWidth() + "x" + buffered.getHeight());
+								break;
+							}
+						} catch (Exception ex) {
+							System.out.println("  Flavor fehlgeschlagen: " + mime + " – " + ex.getMessage());
+						}
+					}
+				}
+			}
+
+			// 3. Datei-Liste (z.B. aus Explorer kopiert)
+			if (buffered == null && content.isDataFlavorSupported(DataFlavor.javaFileListFlavor)) {
+				@SuppressWarnings("unchecked")
+				List<File> files = (List<File>) content.getTransferData(DataFlavor.javaFileListFlavor);
+				if (!files.isEmpty()) { loadImage(files.get(0)); return; }
+			}
+
+			if (buffered == null) {
+				System.out.println("⚠️ Kein unterstütztes Bildformat im Clipboard");
+				return;
+			}
+
+			originalImageBackup = buffered;
+			loadedImage = deepCopyImage(buffered);
+			originalImageFile = null;
+			isImageEdited = false;
+			zoomFactor = 1.0;
+			clearColors();
+			updateImageLabel();
+			setTitle("Multicolor Posterizer & Vectorizer - [Clipboard]");
+			System.out.println("✅ Bild aus Clipboard eingefügt: "
+					+ buffered.getWidth() + "x" + buffered.getHeight());
+
+		} catch (Exception e) {
+			System.out.println("❌ Fehler beim Einfügen: " + e.getMessage());
+			e.printStackTrace();
+		}
 	}
 
 	private void loadImage(File file) {

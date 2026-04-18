@@ -5,11 +5,9 @@ import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.File;
-import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
-import java.io.PrintWriter;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -210,114 +208,99 @@ public class PotraceBridge {
             System.out.println("Transparenz-Farbe: " + colorToString(transparencyColor) + " (" + colorToHex(transparencyColor) + ")");
         }
 
-        for (int colorIndex = 0; colorIndex < colors.size(); colorIndex++) {
-            Color targetColor = colors.get(colorIndex);
+        // === SINGLE-PASS: alle Masken in einem Bilddurchlauf erzeugen ===
+        System.out.println("Erzeuge alle Masken in einem Durchlauf...");
+        BufferedImage[] allMasks = createAllMasksInOnePass(workingImage, colors, tolerance);
 
-            // KORRIGIERT: Transparenz-Farbe erkennen und speziell behandeln
+        // Transparenz-Farben direkt behandeln (kein Potrace nötig)
+        for (int i = 0; i < colors.size(); i++) {
+            Color targetColor = colors.get(i);
             if (transparencyColor != null && colorsMatch(targetColor, transparencyColor, 5)) {
-                System.out.println("\n--- FARBE " + (colorIndex + 1) + "/" + colors.size() + " ---");
-                System.out.println("Zielfarbe: " + colorToString(targetColor) + " (" + colorToHex(targetColor) + ")");
-                System.out.println("👻 TRANSPARENZ-FARBE ERKANNT - Erstelle Transparenz-Bereich");
-
-                // Erstelle Maske für Transparenz-Bereiche (mit workingImage statt posterizedImg)
-                BufferedImage transparencyMask = createColorSpecificMask(workingImage, targetColor, tolerance);
-                
-                // Speichere Debug-PNG
-                String colorHex = colorToHex(targetColor).substring(1);
-                File debugPngFile = new File(tempDir, "debug_transparency_" + colorIndex + "_" + colorHex + ".png");
-                try {
-                    ImageIO.write(transparencyMask, "png", debugPngFile);
-                    System.out.println("Debug Transparenz-Maske gespeichert: " + debugPngFile.getName());
-                } catch (IOException e) {
-                    System.out.println("Warnung: Konnte Debug-PNG nicht speichern: " + e.getMessage());
-                }
-                
-                // Erstelle Transparenz-SVG-Element (kein Potrace nötig)
-                String transparencyPath = createTransparencyPath(workingImage, transparencyMask);
-                if (transparencyPath != null && !transparencyPath.trim().isEmpty()) {
+                System.out.println("👻 TRANSPARENZ-FARBE: " + colorToString(targetColor));
+                String transparencyPath = createTransparencyPath(workingImage, allMasks[i]);
+                if (transparencyPath != null && !transparencyPath.trim().isEmpty())
                     svgSnippets.put(targetColor, transparencyPath);
-                    System.out.println("✅ Transparenz-Bereich erstellt für " + colorToString(targetColor));
-                } else {
-                    System.out.println("⚠️ Keine Transparenz-Bereiche gefunden");
-                }
-
-                // SPEICHER-FREIGABE
-                transparencyMask.flush();
-                transparencyMask = null;
-
-                continue; // Nächste Farbe
-            }
-
-            String colorHex = colorToHex(targetColor).substring(1);
-            System.out.println("\n--- FARBE " + (colorIndex + 1) + "/" + colors.size() + " ---");
-            System.out.println("Zielfarbe: " + colorToString(targetColor) + " (" + colorToHex(targetColor) + ")");
-
-            File pbmFile = new File(tempDir, "color_" + colorIndex + "_" + colorHex + ".pbm");
-            File svgFile = new File(tempDir, "color_" + colorIndex + "_" + colorHex + ".svg");
-            File debugPngFile = new File(tempDir, "debug_color_" + colorIndex + "_" + colorHex + ".png");
-
-            try {
-                // Verwende workingImage (skaliert) statt posterizedImg
-                BufferedImage mask = createColorSpecificMask(workingImage, targetColor, tolerance);
-                ImageIO.write(mask, "png", debugPngFile);
-                int blackPixels = savePBM(mask, pbmFile);
-                System.out.println("PBM erstellt: " + pbmFile.getName() + " (" + blackPixels + " schwarze Pixel)");
-
-                if (blackPixels < 10) {
-                    System.out.println("⚠️ Zu wenig Pixel – überspringe");
-                    continue;
-                }
-
-                System.out.println("Starte Potrace für " + pbmFile.getName() + "...");
-                // === KORRIGIERT: Verwende automatisch installierten Potrace-Pfad ===
-                ProcessBuilder pb = new ProcessBuilder(potraceExePath, pbmFile.getAbsolutePath(), "-s", "-o",
-                        svgFile.getAbsolutePath());
-
-                pb.directory(tempDir);
-                pb.redirectErrorStream(true);
-                Process proc = pb.start();
-
-                StringBuilder potraceOutput = new StringBuilder();
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        potraceOutput.append(line).append("\n");
-                    }
-                }
-
-                int exitCode = proc.waitFor();
-                System.out.println("Potrace Exit-Code: " + exitCode);
-                if (potraceOutput.length() > 0) {
-                    System.out.println("Potrace Output: " + potraceOutput.toString().trim());
-                }
-
-                if (!svgFile.exists() || svgFile.length() < 50) {
-                    System.out.println("❌ Ungültige SVG-Datei: " + svgFile.getName());
-                    continue;
-                }
-
-                String svgContent = new String(Files.readAllBytes(svgFile.toPath()), "UTF-8");
-                System.out.println("SVG gelesen: " + svgContent.length() + " Zeichen");
-
-                String pathData = extractAndRecolorPaths(svgContent, targetColor);
-                if (pathData != null && !pathData.trim().isEmpty()) {
-                    svgSnippets.put(colors.get(colorIndex), pathData);
-                    System.out.println("✅ Pfade extrahiert für " + colorToString(targetColor));
-                } else {
-                    System.out.println("❌ Keine gültigen Pfade in SVG");
-                }
-
-                // SPEICHER-FREIGABE: Gebe Maske nach Verwendung frei
-                mask.flush();
-                mask = null;
-
-            } catch (Exception e) {
-                System.out.println("❌ Fehler bei Farbe " + colorToString(targetColor) + ": " + e.getMessage());
-                e.printStackTrace();
+                allMasks[i].flush();
+                allMasks[i] = null;
             }
         }
 
-        // SPEICHER-FREIGABE: Gebe temporäres Bild frei wenn skaliert wurde
+        // === PARALLELISIERUNG: alle Potrace-Aufrufe gleichzeitig ===
+        int threads = Math.min(colors.size(), Runtime.getRuntime().availableProcessors());
+        ExecutorService pool = Executors.newFixedThreadPool(threads);
+        List<Future<Map.Entry<Color, String>>> futures = new ArrayList<>();
+
+        for (int i = 0; i < colors.size(); i++) {
+            final int colorIndex = i;
+            final Color targetColor = colors.get(i);
+            final BufferedImage mask = allMasks[i];
+
+            if (mask == null) continue; // bereits als Transparenz behandelt
+
+            futures.add(pool.submit(() -> {
+                String colorHex = colorToHex(targetColor).substring(1);
+                File pbmFile = new File(tempDir, "color_" + colorIndex + "_" + colorHex + ".pbm");
+                File svgFile = new File(tempDir, "color_" + colorIndex + "_" + colorHex + ".svg");
+
+                try {
+                    int blackPixels = savePBM(mask, pbmFile);
+                    mask.flush();
+                    System.out.println("PBM: " + pbmFile.getName() + " (" + blackPixels + " schwarze Pixel)");
+
+                    if (blackPixels < 10) {
+                        System.out.println("⚠️ Zu wenig Pixel – überspringe " + colorToString(targetColor));
+                        return null;
+                    }
+
+                    ProcessBuilder pb = new ProcessBuilder(
+                            potraceExePath, pbmFile.getAbsolutePath(), "-s", "-o", svgFile.getAbsolutePath());
+                    pb.directory(tempDir);
+                    pb.redirectErrorStream(true);
+                    Process proc = pb.start();
+                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(proc.getInputStream()))) {
+                        while (reader.readLine() != null) { /* stdout verwerfen */ }
+                    }
+                    int exitCode = proc.waitFor();
+
+                    if (exitCode != 0 || !svgFile.exists() || svgFile.length() < 50) {
+                        System.out.println("❌ Potrace fehlgeschlagen für " + colorToString(targetColor));
+                        return null;
+                    }
+
+                    String svgContent = new String(Files.readAllBytes(svgFile.toPath()), "UTF-8");
+                    String pathData = extractAndRecolorPaths(svgContent, targetColor);
+                    if (pathData != null && !pathData.trim().isEmpty()) {
+                        System.out.println("✅ Pfade extrahiert für " + colorToString(targetColor));
+                        return new AbstractMap.SimpleEntry<>(targetColor, pathData);
+                    }
+                    return null;
+
+                } catch (Exception e) {
+                    System.out.println("❌ Fehler bei " + colorToString(targetColor) + ": " + e.getMessage());
+                    return null;
+                }
+            }));
+        }
+
+        pool.shutdown();
+        try {
+            pool.awaitTermination(10, TimeUnit.MINUTES);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        // Ergebnisse in Reihenfolge einsammeln (LinkedHashMap bewahrt Farb-Reihenfolge)
+        for (Future<Map.Entry<Color, String>> future : futures) {
+            try {
+                Map.Entry<Color, String> result = future.get();
+                if (result != null)
+                    svgSnippets.put(result.getKey(), result.getValue());
+            } catch (Exception e) {
+                System.out.println("❌ Fehler beim Abrufen des Ergebnisses: " + e.getMessage());
+            }
+        }
+
+        // SPEICHER-FREIGABE
         if (workingImage != posterizedImg) {
             workingImage.flush();
             workingImage = null;
@@ -589,33 +572,55 @@ public class PotraceBridge {
 
     private static BufferedImage createColorSpecificMask(BufferedImage posterizedImg, Color targetColor,
             int tolerance) {
-        int w = posterizedImg.getWidth();
-        int h = posterizedImg.getHeight();
-        BufferedImage mask = new BufferedImage(w, h, BufferedImage.TYPE_BYTE_BINARY);
+        BufferedImage[] masks = createAllMasksInOnePass(posterizedImg, List.of(targetColor), tolerance);
+        return masks[0];
+    }
 
-        int matchingPixels = 0;
-        int totalPixels = w * h;
+    private static BufferedImage[] createAllMasksInOnePass(BufferedImage img, List<Color> colors, int tolerance) {
+        int w = img.getWidth();
+        int h = img.getHeight();
+        int n = colors.size();
+
+        BufferedImage[] masks = new BufferedImage[n];
+        int[] matchCount = new int[n];
+        int[] WHITE = new int[n];
+        int[] BLACK = new int[n];
+        int[] tr = new int[n], tg = new int[n], tb = new int[n];
+
+        for (int i = 0; i < n; i++) {
+            masks[i] = new BufferedImage(w, h, BufferedImage.TYPE_BYTE_BINARY);
+            WHITE[i] = Color.WHITE.getRGB();
+            BLACK[i] = Color.BLACK.getRGB();
+            tr[i] = colors.get(i).getRed();
+            tg[i] = colors.get(i).getGreen();
+            tb[i] = colors.get(i).getBlue();
+        }
 
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
-                Color pixelColor = new Color(posterizedImg.getRGB(x, y));
-
-                boolean isMatch = colorsMatch(pixelColor, targetColor, tolerance);
-
-                if (isMatch) {
-                    mask.setRGB(x, y, Color.WHITE.getRGB());
-                    matchingPixels++;
-                } else {
-                    mask.setRGB(x, y, Color.BLACK.getRGB());
+                int rgb = img.getRGB(x, y);
+                int r = (rgb >> 16) & 0xFF;
+                int g = (rgb >>  8) & 0xFF;
+                int b =  rgb        & 0xFF;
+                for (int i = 0; i < n; i++) {
+                    if (Math.abs(r - tr[i]) <= tolerance &&
+                        Math.abs(g - tg[i]) <= tolerance &&
+                        Math.abs(b - tb[i]) <= tolerance) {
+                        masks[i].setRGB(x, y, WHITE[i]);
+                        matchCount[i]++;
+                    } else {
+                        masks[i].setRGB(x, y, BLACK[i]);
+                    }
                 }
             }
         }
 
-        double percentage = (matchingPixels * 100.0) / totalPixels;
-        System.out.println("Maske: " + matchingPixels + "/" + totalPixels + " Pixel ("
-                + String.format("%.2f", percentage) + "%) für " + colorToString(targetColor));
-
-        return mask;
+        int total = w * h;
+        for (int i = 0; i < n; i++) {
+            System.out.println("Maske: " + matchCount[i] + "/" + total + " Pixel ("
+                + String.format("%.2f", matchCount[i] * 100.0 / total) + "%) für " + colorToString(colors.get(i)));
+        }
+        return masks;
     }
 
     private static boolean colorsMatch(Color c1, Color c2, int tolerance) {
@@ -623,26 +628,34 @@ public class PotraceBridge {
     }
 
     private static int savePBM(BufferedImage img, File file) throws IOException {
+        int w = img.getWidth();
+        int h = img.getHeight();
         int blackPixels = 0;
-        try (PrintWriter writer = new PrintWriter(new FileWriter(file))) {
-            writer.println("P1");
-            writer.println("# Binary mask for color vectorization");
-            writer.println(img.getWidth() + " " + img.getHeight());
 
-            for (int y = 0; y < img.getHeight(); y++) {
-                StringBuilder line = new StringBuilder();
-                for (int x = 0; x < img.getWidth(); x++) {
-                    Color c = new Color(img.getRGB(x, y));
-                    boolean isBlack = c.getRed() < 128;
-                    if (isBlack)
-                        blackPixels++;
-                    line.append(isBlack ? "0 " : "1 ");
+        // P4 binary PBM: 8 pixels per byte, up to 16x smaller than P1 ASCII
+        byte[] header = ("P4\n# Binary mask for color vectorization\n" + w + " " + h + "\n").getBytes("ASCII");
+        int rowBytes = (w + 7) / 8;
+        byte[] pixels = new byte[rowBytes * h];
+
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int rgb = img.getRGB(x, y);
+                boolean isBlack = ((rgb >> 16) & 0xFF) < 128;  // PBM: 1=black, 0=white
+                if (isBlack) {
+                    blackPixels++;
+                    pixels[y * rowBytes + x / 8] |= (byte) (0x80 >> (x % 8));
                 }
-                writer.println(line.toString().trim());
             }
+        }
+
+        try (java.io.OutputStream out = new java.io.BufferedOutputStream(new java.io.FileOutputStream(file))) {
+            out.write(header);
+            out.write(pixels);
         }
         return blackPixels;
     }
+
+    private static final Pattern PATH_PATTERN = Pattern.compile("<path[^>]*d=\"([^\"]+)\"[^>]*/?>");
 
     private static String extractAndRecolorPaths(String svgContent, Color targetColor) {
         if (svgContent == null || svgContent.trim().isEmpty()) {
@@ -659,45 +672,57 @@ public class PotraceBridge {
         StringBuilder result = new StringBuilder();
         String hexColor = colorToHex(targetColor);
 
-        java.util.regex.Pattern pathPattern = java.util.regex.Pattern.compile("<path[^>]*d=\"([^\"]+)\"[^>]*/?>");
-        java.util.regex.Matcher matcher = pathPattern.matcher(svgContent);
-
-        java.util.List<String> allPaths = new java.util.ArrayList<>();
-        while (matcher.find()) {
-            String dAttribute = matcher.group(1);
-            allPaths.add(dAttribute);
+        // Extract SVG viewport dimensions for dynamic edge-path filtering
+        int svgW = 0, svgH = 0;
+        Matcher dimMatcher = Pattern.compile("viewBox=\"0 0 ([\\d.]+) ([\\d.]+)\"").matcher(svgContent);
+        if (dimMatcher.find()) {
+            svgW = (int) Double.parseDouble(dimMatcher.group(1));
+            svgH = (int) Double.parseDouble(dimMatcher.group(2));
         }
 
+        Matcher matcher = PATH_PATTERN.matcher(svgContent);
+        List<String> allPaths = new ArrayList<>();
+        while (matcher.find()) {
+            allPaths.add(matcher.group(1));
+        }
         System.out.println("   Gefundene Pfade: " + allPaths.size());
 
-        java.util.List<String> filteredPaths = new java.util.ArrayList<>();
-
+        List<String> filteredPaths = new ArrayList<>();
         for (String path : allPaths) {
-            boolean isBackgroundPath = false;
+            boolean isBackground = false;
 
-            if (path.startsWith("M0,0") || path.startsWith("M0 0") || path.contains("M983,") || path.contains("M709,")
-                    || path.contains("M 983,") || path.contains("M 709,")) {
-                System.out.println("   FILTERE RAND-PFAD: " + path.substring(0, Math.min(50, path.length())));
-                isBackgroundPath = true;
+            if (path.startsWith("M0,0") || path.startsWith("M0 0")) {
+                isBackground = true;
+            } else if (svgW > 0 && svgH > 0) {
+                // Dynamic: filter paths that start at the image edge
+                if (path.contains("M" + svgW + ",") || path.contains("M " + svgW + ",")
+                        || path.contains("M" + svgH + ",") || path.contains("M " + svgH + ",")) {
+                    isBackground = true;
+                }
             }
 
-            int curveCount = (path.length() - path.replace("C", "").length())
-                    + (path.length() - path.replace("c", "").length());
-            if (curveCount == 0 && path.length() > 100) {
-                System.out.println("   FILTERE EINFACHEN PFAD: keine Kurven, " + path.length() + " Zeichen");
-                isBackgroundPath = true;
+            if (!isBackground) {
+                int curveCount = 0;
+                for (int i = 0; i < path.length(); i++) {
+                    char ch = path.charAt(i);
+                    if (ch == 'C' || ch == 'c') curveCount++;
+                }
+                if (curveCount == 0 && path.length() > 100)
+                    isBackground = true;
             }
 
-            if (!isBackgroundPath) {
+            if (!isBackground) {
                 filteredPaths.add(path);
                 System.out.println("   BEHALTE PFAD: " + path.substring(0, Math.min(50, path.length())) + "...");
+            } else {
+                System.out.println("   FILTERE PFAD: " + path.substring(0, Math.min(50, path.length())));
             }
         }
 
         System.out.println("   Nach Filterung: " + filteredPaths.size() + "/" + allPaths.size() + " Pfade");
 
+        // A1 fix: each path appended exactly once
         for (String dAttribute : filteredPaths) {
-            String cleanPath = "<path d=\"" + dAttribute + "\" fill=\"" + hexColor + "\" stroke=\"none\"/>";
             if (hexColor.equals("#000000")) {
                 result.append("<path d=\"").append(dAttribute)
                         .append("\" fill=\"none\" stroke=\"#000000\" stroke-width=\"1\"/>\n");
@@ -705,8 +730,6 @@ public class PotraceBridge {
                 result.append("<path d=\"").append(dAttribute).append("\" fill=\"").append(hexColor)
                         .append("\" stroke=\"none\"/>\n");
             }
-
-            result.append(cleanPath).append("\n");
         }
 
         String finalResult = result.toString().trim();

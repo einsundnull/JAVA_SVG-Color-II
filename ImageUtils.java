@@ -29,45 +29,41 @@ public class ImageUtils {
 	 * Pixel wird durch die ähnlichste Farbe aus der Palette ersetzt.
 	 */
 public static BufferedImage posterize(BufferedImage original, List<Color> palette, int tolerance) {
-		// ImageUtils.java posterize()
 		int width = original.getWidth();
 		int height = original.getHeight();
 		BufferedImage result = new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB);
 
-		Color transparencyColor = ColorUtils.TRANSPARENCY_COLOR;
-
-		int[] colorCounts = new int[palette.size() + 1];
-		int transparentPixels = 0;
+		// Pre-extract palette components to avoid Color object allocation per pixel
+		int n = palette.size();
+		int[] pr = new int[n], pg = new int[n], pb = new int[n], prgb = new int[n];
+		for (int i = 0; i < n; i++) {
+			Color c = palette.get(i);
+			pr[i] = c.getRed(); pg[i] = c.getGreen(); pb[i] = c.getBlue();
+			prgb[i] = c.getRGB();
+		}
+		int transpRGB = ColorUtils.TRANSPARENCY_COLOR.getRGB();
+		double tol2 = (double) tolerance * tolerance * 3; // squared Euclidean threshold
 
 		for (int y = 0; y < height; y++) {
 			for (int x = 0; x < width; x++) {
-				Color originalColor = new Color(original.getRGB(x, y));
-				Color closestColor = findClosestColor(originalColor, palette, tolerance);
-				
-				if (closestColor != null) {
-					result.setRGB(x, y, closestColor.getRGB());
-					for (int i = 0; i < palette.size(); i++) {
-						if (closestColor.equals(palette.get(i))) {
-							colorCounts[i]++;
-							break;
-						}
+				int rgb = original.getRGB(x, y);
+				int r = (rgb >> 16) & 0xFF;
+				int g = (rgb >>  8) & 0xFF;
+				int b =  rgb        & 0xFF;
+
+				int bestIdx = -1;
+				double bestDist = Double.MAX_VALUE;
+				for (int i = 0; i < n; i++) {
+					int dr = r - pr[i], dg = g - pg[i], db = b - pb[i];
+					double dist = dr*dr + dg*dg + db*db;
+					if (dist <= tol2 && dist < bestDist) {
+						bestDist = dist;
+						bestIdx = i;
 					}
-				} else {
-					result.setRGB(x, y, transparencyColor.getRGB());
-					transparentPixels++;
 				}
+				result.setRGB(x, y, bestIdx >= 0 ? prgb[bestIdx] : transpRGB);
 			}
 		}
-
-		for (int i = 0; i < palette.size(); i++) {
-			Color c = palette.get(i);
-			double percentage = (colorCounts[i] * 100.0) / (width * height);
-		}
-		
-		if (transparentPixels > 0) {
-			double transparentPercentage = (transparentPixels * 100.0) / (width * height);
-		}
-
 		return result;
 	}
 	public static BufferedImage convertToGrayscale(BufferedImage image) {
