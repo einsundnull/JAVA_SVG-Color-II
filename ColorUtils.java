@@ -5,6 +5,7 @@ import java.awt.Color;
 public class ColorUtils {
 
     public static final Color TRANSPARENCY_COLOR = new Color(255, 0, 255);
+	public static Color transparencyColor;
 
     public static String colorToString(Color c) {
         return "RGB(" + c.getRed() + "," + c.getGreen() + "," + c.getBlue() + ")";
